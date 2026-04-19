@@ -3,78 +3,69 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 from typing import Dict, List, Tuple
 from datetime import datetime
 
-# زيادة المهلة لتجنب أخطاء الاتصال في Railway
-DEFAULT_TIMEOUT = 120000 
+# المهلة الزمنية الافتراضية للعمليات الفردية
+TIMEOUT_VAL = 25000 
 
 async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool]:
     url = "https://www.xbox.com/en-US/play/consoles"
-    for attempt in range(2):
-        try:
-            await page.goto(url, timeout=DEFAULT_TIMEOUT)
-            await page.wait_for_load_state("domcontentloaded", timeout=DEFAULT_TIMEOUT)
-            await asyncio.sleep(10) # وقت إضافي لضمان تحميل قائمة الأجهزة
+    try:
+        # التوجه المباشر لصفحة الأجهزة
+        await page.goto(url, timeout=TIMEOUT_VAL, wait_until="domcontentloaded")
+        await asyncio.sleep(5) # وقت كافٍ لتحميل حالة الأجهزة
+        
+        text = (await page.inner_text("body")).lower()
+        
+        if "play your console remotely" in text or "start remote play" in text:
+            return True, "يوجد جهاز", True
+        if "set up your console" in text or "no consoles found" in text or "connect a console" in text:
+            return False, "مسجل ولا يوجد جهاز", True
             
-            text = (await page.inner_text("body")).lower()
+        # إذا لم نجد النصوص السابقة، ربما نحتاج لانتظار أطول قليلاً
+        await asyncio.sleep(3)
+        text = (await page.inner_text("body")).lower()
+        if "play your console" in text:
+            return True, "يوجد جهاز", True
             
-            if "play your console remotely" in text or "start remote play" in text:
-                return True, "يوجد جهاز", True
-            if "set up your console" in text or "no consoles found" in text or "connect a console" in text:
-                return False, "مسجل ولا يوجد جهاز", True
-            if "sign in" in text:
-                # محاولة أخيرة إذا ظهر زر تسجيل دخول
-                await page.click("text='Sign in'", timeout=5000)
-                await asyncio.sleep(5)
-                text = (await page.inner_text("body")).lower()
-                if "play your console" in text:
-                    return True, "يوجد جهاز", True
-        except:
-            continue
-    return False, "تسجيل دخول غير مكتمل أو صفحة فارغة", False
+    except Exception:
+        pass
+    return False, "مسجل (تحقق يدوي مطلوب)", True
 
 async def handle_password_entry(page, password: str) -> bool:
     try:
+        # إغلاق أي نافذة منبثقة (Escape)
+        await page.keyboard.press("Escape")
+        
         # البحث عن حقل كلمة المرور
         password_input = page.locator("input[type='password'], input[name='passwd'], #i0118")
         
-        # إذا لم يظهر الحقل، قد نحتاج للنقر على خيار "Use your password"
+        # محاولة تجاوز Passkey إذا ظهرت
         if not await password_input.is_visible():
             try:
-                # محاولة النقر على أي رابط يخص كلمة المرور لتجاوز Passkey
-                pwd_option = page.locator("text='Use your password', text='Password', #passwordLink")
-                if await pwd_option.is_visible(timeout=10000):
+                pwd_option = page.locator("text='Use your password', text='Password'")
+                if await pwd_option.is_visible(timeout=5000):
                     await pwd_option.click()
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
             except:
                 pass
 
-        await password_input.wait_for(state="visible", timeout=30000)
+        await password_input.wait_for(state="visible", timeout=15000)
         await password_input.fill(password)
-        await asyncio.sleep(2)
         
         # النقر على زر الدخول
-        submit_btn = page.locator("input[type='submit'], #idSIButton9")
-        await submit_btn.click()
-        await asyncio.sleep(5)
+        await page.locator("input[type='submit'], #idSIButton9").click()
+        await asyncio.sleep(3)
         
-        # التعامل مع شاشات ما بعد تسجيل الدخول (Stay signed in / Protect account)
+        # تخطي شاشات ما بعد تسجيل الدخول بسرعة
         try:
-            # شاشة Stay signed in?
+            # Stay signed in?
             yes_btn = page.locator("#idSIButton9, input[value='Yes']")
-            if await yes_btn.is_visible(timeout=10000):
+            if await yes_btn.is_visible(timeout=5000):
                 await yes_btn.click()
-                await asyncio.sleep(3)
-                
-            # شاشة Protect your account (نحاول تخطيها)
-            skip_btn = page.locator("text='Not now', text='Skip for now', #iShowSkip")
-            if await skip_btn.is_visible(timeout=5000):
-                await skip_btn.click()
-                await asyncio.sleep(3)
         except:
             pass
             
         return True
-    except Exception as e:
-        print(f"Error in handle_password_entry: {e}")
+    except Exception:
         return False
 
 async def process_account(account: Dict, headless: bool = True) -> Dict:
@@ -91,42 +82,28 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
         p = await async_playwright().start()
         browser = await p.chromium.launch(headless=headless, args=['--no-sandbox', '--disable-setuid-sandbox'])
         
-        # إنشاء سياق متصفح مع حقن كود لتعطيل WebAuthn (Passkey)
+        # تعطيل WebAuthn (Passkey) برمجياً
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             viewport={'width': 1280, 'height': 720}
         )
-        
-        # حقن كود JavaScript لتعطيل Passkey تماماً قبل تحميل الصفحة
-        await context.add_init_script("""
-            delete window.PublicKeyCredential;
-            window.PublicKeyCredential = undefined;
-            Object.defineProperty(navigator, 'credentials', {
-                get: () => ({
-                    get: () => Promise.reject(new Error('WebAuthn is disabled')),
-                    create: () => Promise.reject(new Error('WebAuthn is disabled'))
-                })
-            });
-        """)
+        await context.add_init_script("delete window.PublicKeyCredential;")
         
         page = await context.new_page()
         
         # رابط تسجيل دخول مباشر
         login_url = f"https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=15&ct={int(datetime.now().timestamp())}&rver=7.0.6737.0&wp=MBI_SSL&wreply=https:%2f%2fwww.xbox.com%2fen-US%2fplay%2fconsoles"
         
-        await page.goto(login_url, timeout=DEFAULT_TIMEOUT)
-        await page.wait_for_load_state("domcontentloaded")
+        await page.goto(login_url, timeout=TIMEOUT_VAL, wait_until="domcontentloaded")
 
         # إدخال البريد
-        email_input = page.locator("input[name='loginfmt'], input[type='email'], #i0116")
-        await email_input.wait_for(state="visible", timeout=DEFAULT_TIMEOUT)
+        email_input = page.locator("input[name='loginfmt'], input[type='email']")
+        await email_input.wait_for(state="visible", timeout=TIMEOUT_VAL)
         await email_input.fill(account['email'])
-        
-        # النقر على التالي
         await page.locator("input[type='submit'], #idSIButton9").click()
-        await asyncio.sleep(5)
+        await asyncio.sleep(3)
 
-        # التعامل مع كلمة المرور (الآن لن تظهر شاشة Passkey لأننا عطلناها)
+        # إدخال كلمة المرور
         if not await handle_password_entry(page, account['password']):
             raise Exception("فشل في إدخال كلمة المرور")
 
@@ -139,7 +116,7 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
         await browser.close()
         await p.stop()
     except Exception as e:
-        result['console_info'] = f"خطأ: {str(e)[:100]}"
+        result['console_info'] = f"خطأ: {str(e)[:50]}"
         if p:
             await p.stop()
     return result
