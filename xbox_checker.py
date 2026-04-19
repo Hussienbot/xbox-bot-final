@@ -27,25 +27,34 @@ async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool
 async def handle_password_entry(page, password: str) -> bool:
     try:
         # محاولة تجاوز Passkey إذا ظهرت
-        # نبحث عن خيار "Other ways to sign in" أو "Use your password"
-        other_ways = page.locator("text='Other ways to sign in', text='Use your password', text='Use password instead'")
-        if await other_ways.is_visible(timeout=5000):
-            await other_ways.click()
-            await asyncio.sleep(2)
-            # إذا ظهرت قائمة خيارات، نختار كلمة المرور
-            password_option = page.locator("role=button[name*='Password'], text='Password'")
-            if await password_option.is_visible(timeout=5000):
-                await password_option.click()
+        # نستخدم محددات منفصلة لتجنب أخطاء الـ Parsing
+        try:
+            other_ways = page.get_by_text("Other ways to sign in")
+            if await other_ways.is_visible(timeout=5000):
+                await other_ways.click()
                 await asyncio.sleep(2)
+                
+                password_option = page.get_by_role("button", name="Password")
+                if await password_option.is_visible(timeout=5000):
+                    await password_option.click()
+                    await asyncio.sleep(2)
+        except:
+            pass
 
-        # البحث عن حقل كلمة المرور
-        password_input = page.locator("input[type='password'], name='passwd'")
+        # البحث عن حقل كلمة المرور باستخدام محددات متعددة بشكل صحيح
+        password_input = page.locator("input[type='password']")
+        if not await password_input.is_visible():
+            password_input = page.locator("input[name='passwd']")
+            
         await password_input.wait_for(state="visible", timeout=15000)
         await password_input.fill(password)
         await asyncio.sleep(2)
         
         # النقر على زر الدخول
-        submit_button = page.locator("input[type='submit'], id='idSIButton9'")
+        submit_button = page.locator("#idSIButton9")
+        if not await submit_button.is_visible():
+            submit_button = page.locator("input[type='submit']")
+            
         await submit_button.click()
         return True
     except Exception as e:
@@ -64,36 +73,40 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
     p = None
     try:
         p = await async_playwright().start()
-        # استخدام User Agent مختلف لتجنب تفعيل Passkey تلقائياً
         browser = await p.chromium.launch(headless=headless, args=['--no-sandbox', '--disable-setuid-sandbox'])
         context = await browser.new_context(
             viewport={'width': 1280, 'height': 720},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0' # تمويه كمتصفح فايرفوكس قديم قليلاً
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0'
         )
         page = await context.new_page()
         
-        # التوجه لصفحة تسجيل الدخول
         login_url = "https://www.xbox.com/en-US/auth/msa?action=logIn&returnUrl=http%3A%2F%2Fwww.xbox.com%2Fen-US%2Fplay%2Fconsoles"
         await page.goto(login_url, timeout=DEFAULT_TIMEOUT)
         await page.wait_for_load_state("networkidle")
 
-        # إدخال البريد
-        email_input = page.locator("input[type='email'], name='loginfmt'")
+        # إدخال البريد باستخدام محددات آمنة
+        email_input = page.locator("input[name='loginfmt']")
+        if not await email_input.is_visible():
+            email_input = page.locator("input[type='email']")
+            
         await email_input.wait_for(state="visible", timeout=DEFAULT_TIMEOUT)
         await email_input.fill(account['email'])
         
         # النقر على التالي
-        next_button = page.locator("input[type='submit'], id='idSIButton9'")
+        next_button = page.locator("#idSIButton9")
+        if not await next_button.is_visible():
+            next_button = page.locator("input[type='submit']")
+            
         await next_button.click()
         await asyncio.sleep(3)
 
         # معالجة كلمة المرور وتجاوز Passkey
         if not await handle_password_entry(page, account['password']):
-            raise Exception("فشل في الوصول لحقل كلمة المرور أو تجاوز Passkey")
+            raise Exception("فشل في الوصول لحقل كلمة المرور")
 
         # التعامل مع شاشة "Stay signed in?"
         try:
-            stay_signed_in = page.locator("input[type='submit'], id='idSIButton9', value='Yes'")
+            stay_signed_in = page.locator("#idSIButton9")
             await stay_signed_in.wait_for(state="visible", timeout=10000)
             await stay_signed_in.click()
         except:
