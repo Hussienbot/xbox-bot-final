@@ -3,15 +3,17 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 from typing import Dict, List, Tuple
 from datetime import datetime
 
-# المهلة الزمنية الافتراضية للعمليات الفردية
-TIMEOUT_VAL = 25000 
+# مهلة زمنية إجمالية لكل عملية فحص حساب (لتجنب تعليق البوت)
+TOTAL_PROCESS_TIMEOUT = 120 
 
 async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool]:
     url = "https://www.xbox.com/en-US/play/consoles"
     try:
-        # التوجه المباشر لصفحة الأجهزة
-        await page.goto(url, timeout=TIMEOUT_VAL, wait_until="domcontentloaded")
-        await asyncio.sleep(5) # وقت كافٍ لتحميل حالة الأجهزة
+        # ضبط مهلة العمليات الفردية لـ 30 ثانية
+        page.set_default_timeout(30000)
+        
+        await page.goto(url, wait_until="domcontentloaded")
+        await asyncio.sleep(8) # وقت كافٍ لتحميل قائمة الأجهزة
         
         text = (await page.inner_text("body")).lower()
         
@@ -20,8 +22,8 @@ async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool
         if "set up your console" in text or "no consoles found" in text or "connect a console" in text:
             return False, "مسجل ولا يوجد جهاز", True
             
-        # إذا لم نجد النصوص السابقة، ربما نحتاج لانتظار أطول قليلاً
-        await asyncio.sleep(3)
+        # محاولة أخيرة إذا كانت الصفحة بطيئة
+        await asyncio.sleep(5)
         text = (await page.inner_text("body")).lower()
         if "play your console" in text:
             return True, "يوجد جهاز", True
@@ -32,40 +34,46 @@ async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool
 
 async def handle_password_entry(page, password: str) -> bool:
     try:
-        # إغلاق أي نافذة منبثقة (Escape)
+        # محاكاة الضغط على Escape لتجاوز أي نافذة نظام منبثقة (Passkey)
         await page.keyboard.press("Escape")
-        
-        # البحث عن حقل كلمة المرور
+        await asyncio.sleep(2)
+
+        # البحث عن حقل كلمة المرور بمحددات متعددة
+        # نستخدم أسلوب البحث المرن
         password_input = page.locator("input[type='password'], input[name='passwd'], #i0118")
         
-        # محاولة تجاوز Passkey إذا ظهرت
+        # إذا لم يظهر الحقل، نحاول النقر على "Use your password"
         if not await password_input.is_visible():
             try:
-                pwd_option = page.locator("text='Use your password', text='Password'")
-                if await pwd_option.is_visible(timeout=5000):
-                    await pwd_option.click()
-                    await asyncio.sleep(2)
+                # البحث عن أي زر يحتوي على نص يخص كلمة المرور
+                pwd_btn = page.locator("text='Use your password', text='Password', [role='button'][name*='Password']")
+                if await pwd_btn.is_visible(timeout=5000):
+                    await pwd_btn.click()
+                    await asyncio.sleep(3)
             except:
                 pass
 
+        # ننتظر ظهور الحقل بحد أقصى 15 ثانية
         await password_input.wait_for(state="visible", timeout=15000)
         await password_input.fill(password)
+        await asyncio.sleep(1)
         
         # النقر على زر الدخول
         await page.locator("input[type='submit'], #idSIButton9").click()
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
         
-        # تخطي شاشات ما بعد تسجيل الدخول بسرعة
+        # التعامل مع شاشة Stay signed in?
         try:
-            # Stay signed in?
             yes_btn = page.locator("#idSIButton9, input[value='Yes']")
             if await yes_btn.is_visible(timeout=5000):
                 await yes_btn.click()
+                await asyncio.sleep(2)
         except:
             pass
             
         return True
-    except Exception:
+    except Exception as e:
+        print(f"Error in handle_password_entry: {e}")
         return False
 
 async def process_account(account: Dict, headless: bool = True) -> Dict:
@@ -82,30 +90,35 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
         p = await async_playwright().start()
         browser = await p.chromium.launch(headless=headless, args=['--no-sandbox', '--disable-setuid-sandbox'])
         
-        # تعطيل WebAuthn (Passkey) برمجياً
+        # تعطيل Passkey برمجياً عبر حقن كود
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             viewport={'width': 1280, 'height': 720}
         )
+        # هذا الكود يمنع الموقع من معرفة أن المتصفح يدعم Passkey
         await context.add_init_script("delete window.PublicKeyCredential;")
         
         page = await context.new_page()
+        # تعيين مهلة Playwright الافتراضية لـ 45 ثانية لتجاوز حد الـ 30 ثانية
+        page.set_default_timeout(45000)
         
-        # رابط تسجيل دخول مباشر
-        login_url = f"https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=15&ct={int(datetime.now().timestamp())}&rver=7.0.6737.0&wp=MBI_SSL&wreply=https:%2f%2fwww.xbox.com%2fen-US%2fplay%2fconsoles"
+        # رابط تسجيل دخول مباشر مع وسيطات إضافية لتقليل الأمان المنبثق
+        login_url = f"https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=15&ct={int(datetime.now().timestamp())}&rver=7.0.6737.0&wp=MBI_SSL&wreply=https:%2f%2fwww.xbox.com%2fen-US%2fplay%2fconsoles&uiflavor=web"
         
-        await page.goto(login_url, timeout=TIMEOUT_VAL, wait_until="domcontentloaded")
+        await page.goto(login_url, wait_until="domcontentloaded")
 
         # إدخال البريد
         email_input = page.locator("input[name='loginfmt'], input[type='email']")
-        await email_input.wait_for(state="visible", timeout=TIMEOUT_VAL)
+        await email_input.wait_for(state="visible")
         await email_input.fill(account['email'])
         await page.locator("input[type='submit'], #idSIButton9").click()
-        await asyncio.sleep(3)
+        
+        # انتظار معالجة البريد (قد يظهر Passkey هنا)
+        await asyncio.sleep(5)
 
-        # إدخال كلمة المرور
+        # إدخال كلمة المرور وتجاوز Passkey
         if not await handle_password_entry(page, account['password']):
-            raise Exception("فشل في إدخال كلمة المرور")
+            raise Exception("فشل في تجاوز Passkey أو إدخال كلمة المرور")
 
         # فحص الجهاز
         has_console, console_info, login_success = await check_console_availability_with_refresh(page)
@@ -116,7 +129,12 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
         await browser.close()
         await p.stop()
     except Exception as e:
-        result['console_info'] = f"خطأ: {str(e)[:50]}"
+        # تنظيف رسالة الخطأ لتكون مفهومة
+        err_msg = str(e)
+        if "Timeout 30000ms" in err_msg:
+            result['console_info'] = "خطأ: استغرق تسجيل الدخول وقتاً طويلاً (Timeout)"
+        else:
+            result['console_info'] = f"خطأ: {err_msg[:50]}"
         if p:
             await p.stop()
     return result
