@@ -1,56 +1,69 @@
+# xbox_checker.py
 import asyncio
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 from typing import Dict, List, Tuple
 from datetime import datetime
-import urllib.parse
 
-DEFAULT_TIMEOUT = 60000
+DEFAULT_TIMEOUT = 90000  # زيادة المهلة إلى 90 ثانية
 
-async def check_console(page) -> Tuple[bool, str, bool]:
+async def handle_password_entry(page, password: str) -> bool:
+    """إدخال كلمة المرور مع انتظار ظهور الحقل بعدة طرق."""
     try:
-        await page.goto("https://www.xbox.com/en-US/play/consoles", timeout=30000)
-        await page.wait_for_load_state("networkidle")
-        text = (await page.inner_text('body')).lower()
-        if "play your console remotely" in text:
-            return True, "يوجد جهاز Xbox", True
-        if "set up your console" in text:
-            return False, "تم تسجيل الدخول ولا يوجد جهاز", True
-        if "sign in to finish setting up" in text:
-            return False, "تسجيل الدخول غير مكتمل", False
-    except:
-        pass
-    return False, "فشل في التحقق", False
+        # انتظار ظهور أي حقل إدخال لكلمة المرور
+        await page.wait_for_selector("input[type='password']", timeout=15000)
+        await page.fill("input[type='password']", password)
+        await asyncio.sleep(2)
+        # النقر على زر تسجيل الدخول
+        submit_buttons = [
+            "input[type='submit']",
+            "button[type='submit']",
+            "button:has-text('Sign in')",
+            "button:has-text('تسجيل الدخول')"
+        ]
+        for selector in submit_buttons:
+            if await page.locator(selector).count() > 0:
+                await page.click(selector)
+                return True
+        # إذا لم نجد زراً، نحاول الضغط على Enter
+        await page.keyboard.press("Enter")
+        return True
+    except Exception as e:
+        return False
 
-async def get_bypass_url(email: str, page) -> str:
-    """
-    محاولة الحصول على رابط يتجاوز Passkey عن طريق:
-    1. فتح صفحة تسجيل الدخول العادية
-    2. إدخال البريد والضغط على Next
-    3. التقاط الرابط المعاد توجيهه (الذي يحتوي على contextid, opid...)
-    4. إعادة استخدام هذا الرابط مع نفس البريد (مع تعديل username)
-    """
-    login_url = "https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=16&rver=7.0.0000.0&wp=MBI_SSL&wreply=https%3A%2F%2Fwww.xbox.com%2Fen-US%2Fplay%2Fconsoles&id=292540"
-    await page.goto(login_url, timeout=DEFAULT_TIMEOUT)
-    await page.wait_for_load_state("networkidle")
-    
-    await page.fill("input[name='loginfmt']", email)
-    await asyncio.sleep(2)
-    await page.click("input[type='submit']")
-    await page.wait_for_load_state("networkidle")
-    await asyncio.sleep(2)
-    
-    # الرابط الحالي بعد التوجيه
-    current_url = page.url
-    if "oauth20_authorize.srf" in current_url:
-        # نعدل الرابط لنفس البريد (نغير username)
-        parsed = urllib.parse.urlparse(current_url)
-        query = urllib.parse.parse_qs(parsed.query)
-        query['username'] = [email]
-        new_query = urllib.parse.urlencode(query, doseq=True)
-        new_url = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
-        return new_url
-    else:
-        return current_url
+async def check_2fa_or_other_challenges(page) -> bool:
+    """التحقق مما إذا كانت الصفحة تطلب رمز تحقق (2FA) أو أي تحدي آخر."""
+    body_text = await page.inner_text('body')
+    lower_text = body_text.lower()
+    if any(phrase in lower_text for phrase in ["enter code", "verification code", "authenticator", "code", "تحقق", "رمز", "تطبيق مصادقة"]):
+        return True
+    # فحص وجود عناصر محددة لطلب الرمز
+    if await page.locator("input[id*='code']").count() > 0 or await page.locator("input[name*='code']").count() > 0:
+        return True
+    return False
+
+async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool]:
+    """التحقق من وجود جهاز Xbox بعد تسجيل الدخول بنجاح."""
+    console_url = "https://www.xbox.com/en-US/play/consoles"
+    for attempt in range(3):
+        try:
+            await page.goto(console_url, timeout=60000)
+            await page.wait_for_load_state("networkidle")
+            await asyncio.sleep(3)
+            text = (await page.inner_text('body')).lower()
+            if "play your console remotely" in text:
+                return True, "يوجد جهاز (يمكن اللعب عن بعد)", True
+            if "set up your console" in text:
+                return False, "مسجل ولا يوجد جهاز", True
+            if "sign in to finish setting up" in text:
+                return False, "تسجيل دخول غير مكتمل", False
+            # إذا كان هناك رسالة خطأ مثل "كلمة مرور خاطئة" أو "الحساب غير موجود"
+            if "incorrect password" in text or "wrong password" in text:
+                return False, "كلمة مرور خاطئة", False
+            if "account doesn't exist" in text or "couldn't find" in text:
+                return False, "الحساب غير موجود", False
+        except Exception:
+            continue
+    return False, "لم يتم العثور على جهاز", False
 
 async def process_account(account: Dict, headless: bool = True) -> Dict:
     result = {
@@ -68,8 +81,8 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
             headless=headless,
             args=[
                 '--no-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-features=WebAuthentication'
+                '--disable-dev-shm-usage',  # مهم لـ Railway
+                '--disable-gpu'
             ]
         )
         context = await browser.new_context(
@@ -77,60 +90,61 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         )
         page = await context.new_page()
-
-        # المحاولة الأولى: استخدام رابط مباشر مع login_hint
-        direct_url = (
-            "https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=16&rver=7.0.0000.0"
-            "&wp=MBI_SSL&wreply=https%3A%2F%2Fwww.xbox.com%2Fen-US%2Fplay%2Fconsoles"
-            f"&id=292540&prompt=login&amr=password&login_hint={account['email']}"
-        )
-        await page.goto(direct_url, timeout=DEFAULT_TIMEOUT)
+        
+        # الذهاب إلى صفحة تسجيل الدخول إلى Xbox
+        await page.goto("https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=16&ct=1700000000&rver=7.0.6737.0&wp=MBI_SSL&wreply=https%3a%2f%2fwww.xbox.com%2fen-US%2fplay%2fconsoles&id=292540", timeout=DEFAULT_TIMEOUT)
         await page.wait_for_load_state("networkidle")
+        
+        # إدخال البريد الإلكتروني
+        email_input = await page.wait_for_selector("input[type='email']", timeout=15000)
+        await email_input.fill(account['email'])
         await asyncio.sleep(2)
-
-        # إذا لم يظهر حقل كلمة المرور، نحاول الحصول على رابط مخصص باستخدام الدالة
-        if await page.locator("input[name='passwd']").count() == 0:
-            print(f"⚠️ الرابط المباشر لم يظهر حقل كلمة المرور، نحاول الحصول على رابط مخصص لـ {account['email']}")
-            bypass_url = await get_bypass_url(account['email'], page)
-            await page.goto(bypass_url, timeout=DEFAULT_TIMEOUT)
-            await page.wait_for_load_state("networkidle")
-            await asyncio.sleep(2)
-
-        # الآن إدخال كلمة المرور
-        try:
-            await page.wait_for_selector("input[name='passwd']", timeout=15000)
-            await page.fill("input[name='passwd']", account['password'])
-            await asyncio.sleep(5)
-        except Exception as e:
-            # إذا ظهر "Sign in another way"
-            if await page.locator("button:has-text('Sign in another way')").count() > 0:
-                await page.click("button:has-text('Sign in another way')")
-                await page.wait_for_load_state("networkidle")
-                await asyncio.sleep(2)
-                await page.click("button:has-text('Use your password')")
-                await page.wait_for_selector("input[name='passwd']", timeout=10000)
-                await page.fill("input[name='passwd']", account['password'])
-                await asyncio.sleep(5)
-            else:
-                raise e
-
-        await page.click("input[type='submit']")
+        
+        # النقر على زر "Next"
+        next_button = await page.wait_for_selector("input[type='submit']", timeout=10000)
+        await next_button.click()
         await page.wait_for_load_state("networkidle")
-
-        # تجاوز "Stay signed in"
+        
+        # الانتظار لظهور حقل كلمة المرور أو أي تحدي
+        await asyncio.sleep(3)
+        
+        # التحقق مما إذا كان هناك طلب رمز 2FA
+        if await check_2fa_or_other_challenges(page):
+            result['console_info'] = "يتطلب رمز تحقق (2FA) - تم التخطي"
+            await browser.close()
+            await p.stop()
+            return result
+        
+        # إدخال كلمة المرور
+        if not await handle_password_entry(page, account['password']):
+            result['console_info'] = "فشل في إدخال كلمة المرور أو عدم ظهور الحقل"
+            await browser.close()
+            await p.stop()
+            return result
+        
+        await page.wait_for_load_state("networkidle")
+        await asyncio.sleep(3)
+        
+        # التعامل مع نافذة "Stay signed in?" إذا ظهرت
         try:
-            if await page.locator("input[value='Yes']").count() > 0:
-                await page.click("input[value='Yes']")
+            yes_button = await page.wait_for_selector("input[value='Yes']", timeout=5000)
+            await yes_button.click()
         except:
             pass
-
-        has_console, console_info, login_success = await check_console(page)
+        
+        # بعد تسجيل الدخول، التحقق من وجود جهاز
+        has_console, console_info, login_success = await check_console_availability_with_refresh(page)
         result['success'] = login_success
         result['has_console'] = has_console
         result['console_info'] = console_info
-
+        
         await browser.close()
         await p.stop()
+        
+    except PlaywrightTimeoutError:
+        result['console_info'] = "انتهت المهلة أثناء تسجيل الدخول"
+        if p:
+            await p.stop()
     except Exception as e:
         result['console_info'] = f"خطأ: {str(e)[:100]}"
         if p:
