@@ -9,7 +9,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from xbox_checker import process_account, parse_accounts_from_text
 
-TOKEN = os.environ.get("TOKEN")  # سيتم تعيينه عبر متغيرات البيئة
+TOKEN = os.environ.get("TOKEN")  # يتم تعيينه عبر متغيرات البيئة
 
 # ------------------- أوامر البوت -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
