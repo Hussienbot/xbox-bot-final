@@ -5,6 +5,58 @@ from datetime import datetime
 
 DEFAULT_TIMEOUT = 60000
 
+# ------------------------------------------------------------
+# دالة تجاوز شاشة Passkey (الضغط على Enter/Space + Sign in another way)
+# ------------------------------------------------------------
+async def bypass_passkey_screen(page):
+    """تجاوز شاشة Passkey بالضغط على Enter/Space ثم اختيار Sign in another way"""
+    print("🔄 محاولة تجاوز شاشة Passkey...")
+    # الضغط على Enter و Space و Escape عدة مرات
+    for key in ["Enter", "Space", "Enter", "Escape", "Space", "Enter"]:
+        await page.keyboard.press(key)
+        await asyncio.sleep(0.5)
+    
+    await asyncio.sleep(2)
+    
+    # البحث عن "Sign in another way" والنقر عليه
+    try:
+        if await page.locator("button:has-text('Sign in another way')").count() > 0:
+            await page.click("button:has-text('Sign in another way')")
+            print("✅ تم النقر على 'Sign in another way' (زر)")
+            await page.wait_for_load_state("networkidle")
+            await asyncio.sleep(2)
+        elif await page.locator("a:has-text('Sign in another way')").count() > 0:
+            await page.click("a:has-text('Sign in another way')")
+            print("✅ تم النقر على 'Sign in another way' (رابط)")
+            await page.wait_for_load_state("networkidle")
+            await asyncio.sleep(2)
+        elif await page.locator("div:has-text('Sign in another way')").count() > 0:
+            await page.click("div:has-text('Sign in another way')")
+            print("✅ تم النقر على 'Sign in another way' (div)")
+            await page.wait_for_load_state("networkidle")
+            await asyncio.sleep(2)
+    except Exception as e:
+        print(f"⚠️ لم يتم العثور على 'Sign in another way': {e}")
+    
+    # البحث عن "Use your password" أو "Use a password"
+    try:
+        for selector in [
+            "button:has-text('Use your password')",
+            "button:has-text('Use a password')",
+            "button:has-text('Use password')"
+        ]:
+            if await page.locator(selector).count() > 0:
+                await page.click(selector)
+                print(f"✅ تم النقر على '{selector}'")
+                await page.wait_for_load_state("networkidle")
+                await asyncio.sleep(2)
+                break
+    except Exception as e:
+        print(f"⚠️ لم يتم العثور على 'Use your password': {e}")
+
+# ------------------------------------------------------------
+# التحقق من وجود جهاز Xbox
+# ------------------------------------------------------------
 async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool]:
     console_url = "https://www.xbox.com/en-US/play/consoles"
     for attempt in range(3):
@@ -23,11 +75,19 @@ async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool
             continue
     return False, "فشل في التحقق", False
 
+# ------------------------------------------------------------
+# معالجة إدخال كلمة المرور مع تجاوز Passkey
+# ------------------------------------------------------------
 async def handle_password_entry(page, account_email: str, password: str) -> bool:
-    """معالجة إدخال كلمة المرور مع تجاوز شاشات Sign in another way / Passkey"""
     try:
-        # أولاً: انتظار ظهور أي عنصر (حقل كلمة المرور أو أزرار بديلة)
-        await page.wait_for_selector("input[type='password'], input[name='passwd'], button:has-text('Sign in another way'), button:has-text('Use your password')", timeout=15000)
+        # أولاً: تجاوز أي شاشة Passkey عالقة
+        await bypass_passkey_screen(page)
+        
+        # انتظار حقل كلمة المرور أو أي عنصر بديل
+        await page.wait_for_selector(
+            "input[type='password'], input[name='passwd'], button:has-text('Sign in another way')",
+            timeout=15000
+        )
         
         # محاولة إدخال كلمة المرور مباشرة
         if await page.locator("input[type='password'], input[name='passwd']").count() > 0:
@@ -35,19 +95,8 @@ async def handle_password_entry(page, account_email: str, password: str) -> bool
             await asyncio.sleep(5)
             return True
         
-        # الضغط على "Sign in another way" إذا ظهر
-        if await page.locator("button:has-text('Sign in another way')").count() > 0:
-            await page.click("button:has-text('Sign in another way')")
-            await page.wait_for_load_state("networkidle")
-            await asyncio.sleep(2)
-        
-        # الضغط على "Use your password" إذا ظهر
-        if await page.locator("button:has-text('Use your password')").count() > 0:
-            await page.click("button:has-text('Use your password')")
-            await page.wait_for_load_state("networkidle")
-            await asyncio.sleep(2)
-        
-        # الآن ننتظر حقل كلمة المرور وندخلها
+        # إذا لم يظهر حقل كلمة المرور، نعيد المحاولة مرة أخرى مع الضغط على Enter
+        await bypass_passkey_screen(page)
         await page.wait_for_selector("input[type='password'], input[name='passwd']", timeout=10000)
         await page.fill("input[type='password'], input[name='passwd']", password)
         await asyncio.sleep(5)
@@ -57,6 +106,9 @@ async def handle_password_entry(page, account_email: str, password: str) -> bool
         print(f"خطأ في handle_password_entry: {e}")
         return False
 
+# ------------------------------------------------------------
+# فحص حساب واحد
+# ------------------------------------------------------------
 async def process_account(account: Dict, headless: bool = True) -> Dict:
     result = {
         'email': account['email'],
@@ -74,7 +126,8 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
             args=[
                 '--no-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-features=WebAuthentication'  # منع WebAuthn/Passkey
+                '--disable-features=WebAuthentication',  # منع Passkey
+                '--disable-web-security'
             ]
         )
         context = await browser.new_context(
@@ -83,36 +136,36 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
         )
         page = await context.new_page()
 
-        # رابط يفرض استخدام كلمة المرور
+        # رابط يفرض كلمة المرور (لتجنب طرق المصادقة البديلة)
         login_url = "https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=16&rver=7.0.0000.0&wp=MBI_SSL&wreply=https:%2F%2Fwww.xbox.com%2Fen-US%2Fplay%2Fconsoles&id=292540&prompt=login"
         await page.goto(login_url, timeout=DEFAULT_TIMEOUT)
         await page.wait_for_load_state("networkidle")
 
-        # إدخال البريد
+        # إدخال البريد الإلكتروني
         await page.fill("input[name='loginfmt']", account['email'])
-        await asyncio.sleep(7)  # انتظار 7 ثوانٍ
+        await asyncio.sleep(7)  # انتظار 7 ثوانٍ كما تطلب
 
         # الضغط على Next
         await page.click("input[type='submit']")
         await page.wait_for_load_state("networkidle")
         await asyncio.sleep(2)
 
-        # معالجة كلمة المرور
+        # معالجة كلمة المرور (بما فيها تجاوز Passkey)
         if not await handle_password_entry(page, account['email'], account['password']):
-            raise Exception("فشل في إدخال كلمة المرور")
+            raise Exception("فشل في إدخال كلمة المرور بعد المحاولات")
 
         # الضغط على زر تسجيل الدخول
         await page.click("input[type='submit']")
         await page.wait_for_load_state("networkidle")
 
-        # "Stay signed in?" - تجاوز
+        # تجاوز شاشة "البقاء مسجلاً"
         try:
             if await page.locator("input[value='Yes']").count() > 0:
                 await page.click("input[value='Yes']")
         except:
             pass
 
-        # فحص وجود جهاز
+        # فحص وجود جهاز Xbox
         has_console, console_info, login_success = await check_console_availability_with_refresh(page)
         result['success'] = login_success
         result['has_console'] = has_console
