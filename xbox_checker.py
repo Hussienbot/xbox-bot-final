@@ -10,7 +10,6 @@ async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool
     # بعد تسجيل الدخول الناجح، نتوجه لصفحة الأجهزة
     url = "https://www.xbox.com/en-US/play/consoles"
     try:
-        # نستخدم User Agent طبيعي هنا لضمان عمل صفحة Xbox
         await page.goto(url, timeout=TIMEOUT_VAL, wait_until="domcontentloaded")
         await asyncio.sleep(10) 
         
@@ -21,7 +20,6 @@ async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool
         if "set up your console" in text or "no consoles found" in text:
             return False, "مسجل ولا يوجد جهاز", True
             
-        # محاولة أخيرة
         await asyncio.sleep(5)
         text = (await page.inner_text("body")).lower()
         if "play your console" in text:
@@ -29,7 +27,6 @@ async def check_console_availability_with_refresh(page) -> Tuple[bool, str, bool
             
     except Exception:
         pass
-    # إذا وصلنا هنا، نفترض نجاح الدخول على الأقل
     return False, "مسجل (تحقق من الجهاز يدوياً)", True
 
 async def process_account(account: Dict, headless: bool = True) -> Dict:
@@ -46,17 +43,19 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
         p = await async_playwright().start()
         browser = await p.chromium.launch(headless=headless, args=['--no-sandbox', '--disable-setuid-sandbox'])
         
-        # استخدام User Agent لهاتف قديم جداً لإجبار مايكروسوفت على عرض الواجهة البسيطة
+        # استخدام User Agent لهاتف قديم لإجبار الواجهة البسيطة
         legacy_ua = "Mozilla/5.0 (BlackBerry; U; BlackBerry 9900; en) AppleWebKit/534.11+ (KHTML, like Gecko) Version/7.1.0.342 Mobile Safari/534.11+"
         
         context = await browser.new_context(user_agent=legacy_ua, viewport={'width': 360, 'height': 640})
         page = await context.new_page()
         page.set_default_timeout(TIMEOUT_VAL)
         
-        # رابط تسجيل دخول مباشر وبسيط
         login_url = f"https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=15&ct={int(datetime.now().timestamp())}&rver=7.0.6737.0&wp=MBI_SSL&wreply=https:%2f%2fwww.xbox.com%2fen-US%2fplay%2fconsoles"
         
         await page.goto(login_url, wait_until="domcontentloaded")
+
+        # ✅ انتظار 10 ثواني قبل إدخال البريد
+        await asyncio.sleep(10)
 
         # 1. إدخال البريد
         email_input = page.locator("input[name='loginfmt'], input[type='email']")
@@ -64,31 +63,30 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
         await email_input.fill(account['email'])
         await page.locator("input[type='submit'], #idSIButton9").click()
         
-        await asyncio.sleep(3)
+        # ✅ بعد الضغط على التالي، انتظر 7 ثواني
+        await asyncio.sleep(7)
 
-        # 2. معالجة شاشة "Sign in another way" إذا ظهرت
+        # 2. الضغط على "Sign in another way" إذا ظهر
         try:
-            # البحث عن أي نص يحتوي على "use your password" (حساسية الأحرف لا تهم)
-            use_password_btn = page.locator("text=/use your password/i")
-            if await use_password_btn.count() > 0:
-                await use_password_btn.first.click()
-                await asyncio.sleep(2)
-            else:
-                # قد يكون الخيار مخفياً خلف "Show more options"
-                more_options = page.locator("text=/show more options/i")
-                if await more_options.count() > 0:
-                    await more_options.first.click()
-                    await asyncio.sleep(1)
-                    # بعد ظهور الخيارات، نضغط على Use your password
-                    use_password_btn = page.locator("text=/use your password/i")
-                    if await use_password_btn.count() > 0:
-                        await use_password_btn.first.click()
-                        await asyncio.sleep(2)
-        except Exception as e:
-            # إذا لم نجد الخيارات، نكمل عادي (قد لا تظهر هذه الشاشة)
+            sign_in_another_way = page.locator("text=/Sign in another way/i")
+            if await sign_in_another_way.count() > 0:
+                await sign_in_another_way.first.click()
+                # ✅ انتظر 7 ثواني بعد الضغط على Sign in another way
+                await asyncio.sleep(7)
+        except:
             pass
 
-        # 3. إدخال كلمة المرور
+        # 3. الضغط على "Use your password" إذا ظهر
+        try:
+            use_password_btn = page.locator("text=/Use your password/i")
+            if await use_password_btn.count() > 0:
+                await use_password_btn.first.click()
+                # ✅ انتظر 7 ثواني بعد الضغط على Use your password
+                await asyncio.sleep(7)
+        except:
+            pass
+
+        # 4. إدخال كلمة المرور
         password_input = page.locator("input[type='password'], input[name='passwd']")
         await password_input.wait_for(state="visible", timeout=20000)
         await password_input.fill(account['password'])
@@ -96,7 +94,7 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
         await page.locator("input[type='submit'], #idSIButton9").click()
         await asyncio.sleep(5)
 
-        # 4. تخطي شاشة "Stay signed in" إذا ظهرت
+        # 5. تخطي شاشة "Stay signed in" إذا ظهرت
         try:
             yes_btn = page.locator("input[value='Yes'], #idSIButton9")
             if await yes_btn.is_visible(timeout=5000):
@@ -105,7 +103,7 @@ async def process_account(account: Dict, headless: bool = True) -> Dict:
         except:
             pass
 
-        # 5. فحص الجهاز
+        # 6. فحص الجهاز
         has_console, console_info, login_success = await check_console_availability_with_refresh(page)
         result['success'] = login_success
         result['has_console'] = has_console
