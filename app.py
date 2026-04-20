@@ -176,7 +176,7 @@ async def process_single_account(account: Dict, proxy: Optional[str], headless: 
             if proxy:
                 browser_options['proxy'] = {'server': proxy}
             # استخدم Firefox بدلاً من Chromium لتقليل الحجم
-            browser = await p.webkit.launch(**browser_options)
+            browser = await p.chromium.launch(**browser_options)
             context = await browser.new_context(
                 viewport={'width': 1280, 'height': 720},
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
