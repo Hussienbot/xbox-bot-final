@@ -8,14 +8,16 @@ import asyncio
 import csv
 import os
 import threading
+import subprocess
+import sys
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
-# ========== تحديد مسار تخزين المتصفحات (لـ Railway) ==========
-os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '/app/browsers'
+# ========== تحديد مسار تخزين المتصفحات (لـ Render) ==========
+os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '/opt/render/project/.cache/ms-playwright'
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'xbox-checker-secret'
@@ -153,6 +155,32 @@ async def process_single_account(account: Dict, proxy: Optional[str], headless: 
     }
     try:
         log_callback(f"🔐 Starting: {account['email']}")
+        
+        # ========== فحص وجود متصفح Firefox ==========
+        try:
+            # تحقق من وجود أمر firefox في المسار
+            which_result = subprocess.run(['which', 'firefox'], capture_output=True, text=True)
+            firefox_path = which_result.stdout.strip()
+            if firefox_path:
+                log_callback(f"✅ Firefox found at: {firefox_path}")
+            else:
+                log_callback(f"❌ Firefox NOT FOUND in PATH")
+            
+            # تحقق من وجود مجلد المتصفحات الخاص بـ Playwright
+            browsers_path = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '/ms-playwright')
+            if os.path.exists(browsers_path):
+                log_callback(f"✅ Playwright browsers directory exists: {browsers_path}")
+                # سرد محتويات المجلد (أول 5 عناصر)
+                try:
+                    contents = os.listdir(browsers_path)[:5]
+                    log_callback(f"   Contents: {contents}")
+                except:
+                    pass
+            else:
+                log_callback(f"❌ Playwright browsers directory NOT found: {browsers_path}")
+        except Exception as e:
+            log_callback(f"⚠️ Could not check Firefox: {str(e)[:100]}")
+        
         async with async_playwright() as p:
             browser_options = {
                 'headless': headless,
@@ -167,7 +195,6 @@ async def process_single_account(account: Dict, proxy: Optional[str], headless: 
                     '--disable-renderer-backgrounding',
                     '--disable-web-security',
                     '--disable-features=VizDisplayCompositor',
-                    '--disable-blink-features=AutomationControlled',
                     '--window-size=1280,720',
                     '--mute-audio',
                     '--disable-notifications'
@@ -175,7 +202,8 @@ async def process_single_account(account: Dict, proxy: Optional[str], headless: 
             }
             if proxy:
                 browser_options['proxy'] = {'server': proxy}
-            # استخدم Firefox بدلاً من Chromium لتقليل الحجم
+            
+            # استخدام Firefox
             browser = await p.firefox.launch(**browser_options)
             context = await browser.new_context(
                 viewport={'width': 1280, 'height': 720},
@@ -234,6 +262,9 @@ async def process_single_account(account: Dict, proxy: Optional[str], headless: 
         result['success'] = False
         result['console_info'] = f"Exception: {str(e)[:80]}"
         log_callback(f"❌ {account['email']} -> Error: {str(e)[:100]}")
+        # طباعة تفاصيل الخطأ كاملة في سجل الخادم (لن تظهر في الواجهة)
+        import traceback
+        log_callback(traceback.format_exc())
     return result
 
 async def run_checker(accounts: List[Dict], proxies: List[str], concurrency: int, headless: bool, log_callback):
