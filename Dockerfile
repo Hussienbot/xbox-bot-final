@@ -2,12 +2,12 @@ FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y \
     wget \
-    gnupq \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# تثبيت Playwright ومتصفح Firefox
+# تثبيت Playwright ومتصفح WebKit (الأخف)
 RUN pip install playwright && \
-    playwright install firefox && \
+    playwright install webkit && \
     playwright install-deps
 
 WORKDIR /app
