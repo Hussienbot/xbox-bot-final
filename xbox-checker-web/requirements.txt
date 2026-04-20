@@ -1,6 +1,0 @@
-flask
-flask-socketio
-playwright
-simple-websocket
-eventlet
-gunicorn
