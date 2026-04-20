@@ -1,4 +1,3 @@
-# nixpacks.toml - ضروري لـ Playwright على Railway
 [phases.setup]
 nixPkgs = [
   "libx11", "libxcb", "libxrandr", "libxcomposite", "libxcursor",
@@ -9,7 +8,10 @@ nixPkgs = [
 ]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt", "playwright install chromium"]
+cmds = [
+  "pip install -r requirements.txt",
+  "playwright install chromium"
+]
 
 [phases.start]
 cmd = "python app.py"
