@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XBOX CHECKER | CYBERPUNK CUSTOM</title>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary-neon: #0ff;
+            --secondary-neon: #f0f;
+            --bg-gradient-start: #0a0a1a;
+            --bg-gradient-end: #02020a;
+            --card-bg: rgba(10, 10, 30, 0.7);
+            --text-color: #0ff;
+            --button-hover-bg: #0ff;
+            --button-hover-text: #000;
+            --border-color: #0ff;
+            --table-bg: #0a0a1a;
+        }
+        body {
+            background: radial-gradient(circle at 20% 30%, var(--bg-gradient-start), var(--bg-gradient-end));
+            font-family: 'Orbitron', 'Courier New', monospace;
+            color: var(--text-color);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+        .container { max-width: 1500px; margin: 0 auto; }
+        .color-panel {
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--primary-neon);
+            border-radius: 20px;
+            padding: 15px;
+            margin-bottom: 25px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .color-controls { display: flex; flex-wrap: wrap; gap: 12px; }
+        .color-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #111122aa;
+            padding: 5px 12px;
+            border-radius: 40px;
+            font-size: 12px;
+        }
+        input[type="color"] { width: 35px; height: 35px; border-radius: 8px; border: 1px solid var(--primary-neon); }
+        .reset-btn {
+            background: #222;
+            border: 1px solid var(--primary-neon);
+            padding: 6px 15px;
+            border-radius: 30px;
+            cursor: pointer;
+        }
+        h1 {
+            font-size: 3rem;
+            text-shadow: 0 0 5px var(--secondary-neon), 0 0 10px var(--primary-neon);
+            border-left: 5px solid var(--secondary-neon);
+            padding-left: 20px;
+            letter-spacing: 4px;
+        }
+        .sub { color: var(--secondary-neon); border-bottom: 1px dashed var(--primary-neon); display: inline-block; margin-bottom: 30px; }
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--primary-neon);
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 25px;
+        }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; }
+        textarea, input, select {
+            background: #111122;
+            border: 1px solid var(--primary-neon);
+            color: var(--text-color);
+            font-family: monospace;
+            padding: 10px;
+            border-radius: 12px;
+            width: 100%;
+        }
+        button {
+            background: linear-gradient(90deg, #112, #001);
+            border: 2px solid var(--primary-neon);
+            color: var(--primary-neon);
+            padding: 12px;
+            border-radius: 40px;
+            width: 100%;
+            font-size: 18px;
+            cursor: pointer;
+            font-family: 'Orbitron', monospace;
+        }
+        button:hover { background: var(--button-hover-bg); color: var(--button-hover-text); }
+        .log-panel {
+            background: #050510;
+            border: 1px solid var(--primary-neon);
+            border-radius: 16px;
+            height: 280px;
+            overflow-y: auto;
+            padding: 15px;
+            font-size: 12px;
+        }
+        .log-entry { border-left: 3px solid var(--secondary-neon); padding-left: 10px; margin-bottom: 8px; }
+        .stats { display: flex; gap: 20px; flex-wrap: wrap; margin: 20px 0; }
+        .stat-card {
+            background: #111122;
+            border: 1px solid var(--primary-neon);
+            border-radius: 20px;
+            padding: 10px 20px;
+            text-align: center;
+            flex: 1;
+        }
+        .stat-number { font-size: 32px; color: var(--secondary-neon); }
+        table { width: 100%; border-collapse: collapse; background: var(--table-bg); border: 1px solid var(--primary-neon); }
+        th, td { padding: 12px; border-bottom: 1px solid #2a2a4a; text-align: left; }
+        th { color: var(--secondary-neon); }
+        .status-device { color: #ffaa44; }
+        .status-success { color: #0f0; }
+        .status-failed { color: #f44; }
+        .copy-btn {
+            background: transparent;
+            border: 1px solid var(--primary-neon);
+            padding: 4px 8px;
+            border-radius: 20px;
+            cursor: pointer;
+            width: auto;
+        }
+        .filter-buttons { display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap; }
+        .filter-btn {
+            background: #111;
+            border: 1px solid var(--primary-neon);
+            padding: 6px 18px;
+            width: auto;
+        }
+        .filter-btn.active { background: var(--primary-neon); color: #000; }
+        .footer { text-align: center; margin-top: 40px; padding: 15px; border-top: 1px solid var(--primary-neon); }
+        @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } h1 { font-size: 2rem; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="color-panel">
+        <div class="color-controls">
+            <div class="color-item"><label>🔵 رئيسي</label><input type="color" id="primaryColor" value="#00ffff"></div>
+            <div class="color-item"><label>🟣 ثانوي</label><input type="color" id="secondaryColor" value="#ff00ff"></div>
+            <div class="color-item"><label>🎨 خلفية بداية</label><input type="color" id="bgStart" value="#0a0a1a"></div>
+            <div class="color-item"><label>🎨 خلفية نهاية</label><input type="color" id="bgEnd" value="#02020a"></div>
+            <div class="color-item"><label>📦 لون الكارد</label><input type="color" id="cardBg" value="#1a1a3aaa"></div>
+            <div class="color-item"><label>✍️ لون النص</label><input type="color" id="textColor" value="#00ffff"></div>
+        </div>
+        <button class="reset-btn" id="resetColors">إعادة تعيين</button>
+    </div>
+    <h1>⚡ XBOX NIGHTMARE ⚡</h1>
+    <div class="sub">// HUSSIEN007 // CYBERPUNK CUSTOM //</div>
+    <div class="grid">
+        <div class="card"><h3>📧 ACCOUNTS</h3><textarea id="accountsInput" rows="8" placeholder="email:password"></textarea><label>📂 UPLOAD</label><input type="file" id="accountsFile" accept=".txt,.csv"></div>
+        <div class="card"><h3>🌐 PROXIES</h3><textarea id="proxiesInput" rows="5" placeholder="http://ip:port"></textarea><label>📂 UPLOAD</label><input type="file" id="proxiesFile" accept=".txt"></div>
+    </div>
+    <div class="card">
+        <div style="display:flex;gap:20px"><div style="flex:1"><label>⚡ CONCURRENCY</label><input type="number" id="concurrency" min="1" max="25" value="5"></div><div style="flex:1"><label>🖥️ MODE</label><select id="headless"><option value="false">VISIBLE</option><option value="true">HEADLESS</option></select></div></div>
+        <button id="startBtn">🚀 START ATTACK</button>
+    </div>
+    <div class="card"><h3>📡 LIVE FEED</h3><div class="log-panel" id="logPanel"><div class="log-entry">> SYSTEM READY</div></div></div>
+    <div class="stats" id="statsPanel" style="display:none;"><div class="stat-card">🎯 DEVICES: <span id="statDevice" class="stat-number">0</span></div><div class="stat-card">📭 LOGGED: <span id="statLogged" class="stat-number">0</span></div><div class="stat-card">💀 FAILED: <span id="statFailed" class="stat-number">0</span></div><div class="stat-card">📊 TOTAL: <span id="statTotal" class="stat-number">0</span></div></div>
+    <div class="filter-buttons">
+        <button class="filter-btn active" data-filter="all">ALL</button>
+        <button class="filter-btn" data-filter="device">DEVICE</button>
+        <button class="filter-btn" data-filter="logged">LOGGED</button>
+        <button class="filter-btn" data-filter="failed">FAILED</button>
+        <button class="filter-btn" id="exportCsvBtn">EXPORT CSV</button>
+        <button class="filter-btn" id="copyAllEmailsBtn">📋 نسخ كل الإيميلات</button>
+    </div>
+    <div class="results-table">
+        <table id="resultsTable"><thead><tr><th>EMAIL</th><th>PASSWORD</th><th>STATUS</th><th>INFO</th><th>TIME</th><th>نسخ</th></tr></thead><tbody id="resultsBody"><tr><td colspan="6">NO DATA</td></tr></tbody></table>
+    </div>
+    <div class="footer">[ HUSSIEN007 // ENCRYPTED CHANNEL // COLORS CUSTOM ]</div>
+</div>
+<script>
+    // Colors control
+    function updateCSSVariables() {
+        document.documentElement.style.setProperty('--primary-neon', document.getElementById('primaryColor').value);
+        document.documentElement.style.setProperty('--secondary-neon', document.getElementById('secondaryColor').value);
+        document.documentElement.style.setProperty('--bg-gradient-start', document.getElementById('bgStart').value);
+        document.documentElement.style.setProperty('--bg-gradient-end', document.getElementById('bgEnd').value);
+        document.documentElement.style.setProperty('--card-bg', document.getElementById('cardBg').value);
+        document.documentElement.style.setProperty('--text-color', document.getElementById('textColor').value);
+        document.documentElement.style.setProperty('--button-hover-bg', document.getElementById('primaryColor').value);
+    }
+    document.querySelectorAll('#primaryColor, #secondaryColor, #bgStart, #bgEnd, #cardBg, #textColor').forEach(i => i.addEventListener('input', updateCSSVariables));
+    document.getElementById('resetColors').addEventListener('click', () => {
+        document.getElementById('primaryColor').value = '#00ffff';
+        document.getElementById('secondaryColor').value = '#ff00ff';
+        document.getElementById('bgStart').value = '#0a0a1a';
+        document.getElementById('bgEnd').value = '#02020a';
+        document.getElementById('cardBg').value = '#1a1a3aaa';
+        document.getElementById('textColor').value = '#00ffff';
+        updateCSSVariables();
+    });
+    updateCSSVariables();
+    // Main logic
+    let socket, allResults=[], currentFilter='all';
+    function addLog(m){let p=document.getElementById('logPanel');let d=document.createElement('div');d.className='log-entry';d.innerText=`[${new Date().toLocaleTimeString()}] ${m}`;p.appendChild(d);d.scrollIntoView({behavior:'smooth',block:'nearest'});}
+    function updateStats(){let d=allResults.filter(r=>r.success&&r.has_console).length;let l=allResults.filter(r=>r.success&&!r.has_console).length;let f=allResults.filter(r=>!r.success).length;document.getElementById('statDevice').innerText=d;document.getElementById('statLogged').innerText=l;document.getElementById('statFailed').innerText=f;document.getElementById('statTotal').innerText=allResults.length;document.getElementById('statsPanel').style.display='flex';}
+    function escapeHtml(s){return s.replace(/[&<>]/g,function(m){if(m==='&')return '&amp;';if(m==='<')return '&lt;';if(m==='>')return '&gt;';return m;});}
+    function copyToClipboard(text, msg){navigator.clipboard.writeText(text).then(()=>addLog(msg)).catch(()=>addLog("فشل النسخ"));}
+    function copyAllEmails(){let emails=allResults.map(r=>r.email).filter(e=>e).join("\n");if(!emails){addLog("لا توجد إيميلات");return;}copyToClipboard(emails,`تم نسخ ${allResults.length} إيميل`);}
+    function copySingleEmail(email){copyToClipboard(email,`نسخ: ${email}`);}
+    function renderTable(){
+        let filtered = allResults;
+        if(currentFilter==='device') filtered = allResults.filter(r=>r.success && r.has_console);
+        else if(currentFilter==='logged') filtered = allResults.filter(r=>r.success && !r.has_console);
+        else if(currentFilter==='failed') filtered = allResults.filter(r=>!r.success);
+        let tbody = document.getElementById('resultsBody');
+        if(filtered.length===0){ tbody.innerHTML='<tr><td colspan="6">NO MATCH</td></tr>'; return; }
+        tbody.innerHTML = filtered.map(r => {
+            let cls='status-failed', txt='FAILED';
+            if(r.success && r.has_console){ cls='status-device'; txt='DEVICE FOUND'; }
+            else if(r.success && !r.has_console){ cls='status-success'; txt='LOGGED NO DEVICE'; }
+            return `<tr><td>${escapeHtml(r.email)}</td><td>${escapeHtml(r.password)}</td><td class="${cls}">${txt}</td><td>${escapeHtml(r.console_info||'—')}</td><td>${new Date(r.timestamp).toLocaleString()}</td><td><button class="copy-btn" data-email="${escapeHtml(r.email)}">📋 نسخ</button></td></tr>`;
+        }).join('');
+        document.querySelectorAll('.copy-btn').forEach(btn=>btn.addEventListener('click',(e)=>{let email=btn.getAttribute('data-email');if(email) copySingleEmail(email);}));
+    }
+    function exportCsv(){let rows=[["Email","Password","Success","HasConsole","Info","Timestamp"]];allResults.forEach(r=>{rows.push([r.email,r.password,r.success,r.has_console,r.console_info,r.timestamp]);});let blob=new Blob([rows.map(r=>r.join(",")).join("\n")],{type:"text/csv"});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`xbox_${Date.now()}.csv`;a.click();}
+    document.getElementById('accountsFile').addEventListener('change',e=>{let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=ev=>document.getElementById('accountsInput').value=ev.target.result;r.readAsText(f);});
+    document.getElementById('proxiesFile').addEventListener('change',e=>{let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=ev=>document.getElementById('proxiesInput').value=ev.target.result;r.readAsText(f);});
+    document.getElementById('copyAllEmailsBtn').addEventListener('click', copyAllEmails);
+    document.getElementById('startBtn').addEventListener('click',()=>{let acc=document.getElementById('accountsInput').value;if(!acc.trim()){addLog("NO ACCOUNTS");return;}let proxies=document.getElementById('proxiesInput').value;let concurrency=parseInt(document.getElementById('concurrency').value)||3;let headless=document.getElementById('headless').value==='true';document.getElementById('startBtn').disabled=true;document.getElementById('startBtn').innerText='RUNNING...';allResults=[];renderTable();updateStats();if(socket)socket.disconnect();socket=io();socket.on('connect',()=>addLog('SOCKET CONNECTED'));socket.on('log',data=>addLog(data.message));socket.on('results',data=>{allResults=data.results;renderTable();updateStats();addLog(`DONE. DEVICES: ${allResults.filter(r=>r.success&&r.has_console).length}`);document.getElementById('startBtn').disabled=false;document.getElementById('startBtn').innerText='🚀 START ATTACK';socket.disconnect();});fetch('/start_check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accounts:acc,proxies,concurrency,headless})}).then(res=>res.json()).then(data=>{if(data.error)addLog(`ERROR: ${data.error}`);else addLog(`STARTED ${data.account_count} ACCOUNTS`);}).catch(err=>addLog(`FETCH ERROR: ${err}`));});
+    document.querySelectorAll('.filter-btn').forEach(btn=>{btn.addEventListener('click',()=>{document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');if(btn.id==='exportCsvBtn')exportCsv();else if(btn.id==='copyAllEmailsBtn'){}else{currentFilter=btn.getAttribute('data-filter');renderTable();}});});
+</script>
+</body>
+</html>
